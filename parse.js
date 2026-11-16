@@ -1803,6 +1803,7 @@ function parseInline(text, refs, ctx) {
   const items = [];
   const delims = [];
   const brackets = [];
+  const labelRanges = []; // [start, end) of labels of links/images that formed
   let seq = 0;
   let linkId = 0;
   let i = 0;
@@ -1983,6 +1984,7 @@ function parseInline(text, refs, ctx) {
         for (const ch of children) if (ch.k === 'delim' && !ch.link) ch.link = linkId;
         items.length = bIdx;
         items.push({ k: b.image ? 'image' : 'link', dest, title, children });
+        labelRanges.push([b.pos + 1, i]);
         for (const br of brackets) if (br.seq > b.seq) br.active = false;
         // A link's text may not contain a link, so once a LINK forms
         // inside an enclosing link bracket, that bracket can never form
@@ -2073,8 +2075,67 @@ function parseInline(text, refs, ctx) {
   for (let k = 0; k < items.length; k++) {
     if (items[k].k === 'auto') items[k] = { k: 'link', dest: items[k].dest, title: null, children: [{ k: 't', s: items[k].text }] };
   }
+  // marked's emStrong masks emphasis inside a precode-code span that
+  // starts at a stray backtick in a link label (a label whose backtick
+  // runs do not pair, e.g. ``x`) and closes at the next backtick after
+  // the label, swallowing the emphasis between the links. Replicate it:
+  // for each backtick run inside a formed link's label, if the first
+  // backtick run after it has the same length and starts at/after the
+  // label end, disable the delimiters inside that span.
+  maskLabelCodeSpans(text, labelRanges, delims);
   processEmphasis(delims);
   return renderItems(items);
+}
+
+// A precode-code span per marked's blockSkip: an opening backtick run,
+// non-backtick content, a closing run of the same length. The opening
+// must use the whole run (a shorter opening leaves a backtick next, and
+// the content needs a non-backtick first), and the closing run is the
+// first backtick run after the opening.
+function maskLabelCodeSpans(text, labelRanges, delims) {
+  if (!delims.length || !labelRanges.length) return;
+  const n = text.length;
+  for (const [ls, le] of labelRanges) {
+    // Backtick runs inside the label that belong to a valid code span
+    // (an equal-length pair, greedily matched) are claimed and never
+    // start a masking span; a run paired with a different-length run
+    // (``x`) is stray and may. Compute the claimed run starts.
+    const claimed = new Set();
+    {
+      let i = ls;
+      while (i < le) {
+        if (text.charCodeAt(i) !== 96) { i++; continue; }
+        let j = i;
+        while (j < le && text.charCodeAt(j) === 96) j++;
+        let k = j;
+        while (k < le && text.charCodeAt(k) !== 96) k++;
+        if (k >= le) break;
+        let m = k;
+        while (m < le && text.charCodeAt(m) === 96) m++;
+        if (m - k === j - i) { claimed.add(i); claimed.add(k); i = m; }
+        else i = j;
+      }
+    }
+    for (let p = ls; p < le; p++) {
+      if (text.charCodeAt(p) !== 96) continue;
+      if (p > ls && text.charCodeAt(p - 1) === 96) continue; // run start only
+      if (claimed.has(p)) continue;
+      let len = 0;
+      while (text.charCodeAt(p + len) === 96) len++;
+      // first backtick run after the opening
+      let q = p + len;
+      while (q < n && text.charCodeAt(q) !== 96) q++;
+      if (q >= n) continue;
+      let qlen = 0;
+      while (text.charCodeAt(q + qlen) === 96) qlen++;
+      if (qlen !== len) continue;
+      if (q < le) continue; // closing run must be at/after the label end
+      const s = p, e = q + qlen;
+      for (const d of delims) {
+        if (d.pos >= s && d.pos < e) { d.canOpen = false; d.canClose = false; }
+      }
+    }
+  }
 }
 
 // Forward m-scan (marked's emStrong): can the closer at ci close the
