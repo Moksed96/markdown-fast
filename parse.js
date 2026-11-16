@@ -595,6 +595,19 @@ function parseLinkTitle(s, i) {
 }
 
 // Skip spaces, tabs and newlines. Returns new index.
+// Validate a link label's raw text against marked's label regex `re`
+// (nested brackets, escapes, code spans with no backtick in the content,
+// backticks just before the closing ']', or any other single character).
+// The `` ``+(?=\]) `` alternative becomes `` `+$ `` here because the label
+// text is tested without its closing ']'. Only needed when the label
+// contains a backtick: without one, the bracket stack already matches
+// marked. Returns true when the whole label text is matchable.
+const _LABEL_BRACKETS = "\\[(?:\\\\[\\s\\S]|[^\\[\\]\\\\])*\\]";
+const LABEL_VALID_RE = new RegExp(
+  "^(?:\\[(?:" + _LABEL_BRACKETS + "|\\\\[\\s\\S]|[^\\[\\]\\\\])*\\]|\\\\[\\s\\S]|`+(?!`)[^`]*?`+(?!`)|`+$|[^\\[\\]\\\\`])*$"
+);
+function labelTextValid(s) { return LABEL_VALID_RE.test(s); }
+
 function skipWSNL(s, i) {
   while (i < s.length) {
     const c = s.charCodeAt(i);
@@ -835,10 +848,11 @@ function parseBlocks(src) {
         }
       } else if (tip.t === 'fence' && open[idx].t === 'item' && !cur.blank()) {
         // A fenced code block inside a list item lazily continues across a
-        // line that lacks the item indent (the fence handler decides whether
-        // the line is a closing fence or content). In a blockquote a fence
-        // does NOT continue past a marker-less line (the quote closes).
-        lazyLine = true;
+        // line that lacks the item's content indent ONLY once it already
+        // has content: an empty fence closes instead (the under-indented
+        // line is not part of the item, so the fence never started).
+        if (tip.lines.length > 0) lazyLine = true;
+        else closeAbove(idx);
       } else {
         closeAbove(idx);
       }
@@ -1812,10 +1826,18 @@ function parseInline(text, refs, ctx) {
         // an angle autolink inside does not block an enclosing link
         if (items[k].k === 'link' && !items[k].angle) { hasLink = true; break; }
       }
+      // A label containing a backtick must match marked's label regex:
+      // a code span like `` a ` b `` (backtick in its content) makes the
+      // whole label unmatchable, so the link (or image) cannot form.
+      let labelBad = false;
+      {
+        const lab = text.slice(b.pos + 1, i);
+        if (lab.indexOf('`') !== -1 && !labelTextValid(lab)) labelBad = true;
+      }
       let dest = null, title = null, next = -1;
       // a link's text may not contain a link (but it may contain an image);
       // an image description may contain either
-      if (!hasLink || b.image) {
+      if ((!hasLink || b.image) && !labelBad) {
         if (text.charCodeAt(i + 1) === 40) { // ( inline link
           const j = skipWSNL(text, i + 2);
           const d = parseLinkDest(text, j);
@@ -1876,6 +1898,14 @@ function parseInline(text, refs, ctx) {
         b.active = false;
         i = next; textStart = i;
         continue;
+      }
+      if (labelBad) {
+        // A label with a code span containing a backtick cannot form a
+        // link, and marked leaves the emphasis delimiters inside it
+        // literal too: disable them so they cannot pair.
+        for (let k = bIdx + 1; k < items.length; k++) {
+          if (items[k].k === 'delim') { items[k].canOpen = false; items[k].canClose = false; }
+        }
       }
       b.active = false;
       // the flushed text item stays; the ] itself becomes pending text
