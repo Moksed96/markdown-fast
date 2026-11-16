@@ -2128,6 +2128,64 @@ function maskLabelCodeSpans(text, labelRanges, delims) {
       if (q >= n) continue;
       let qlen = 0;
       while (text.charCodeAt(q + qlen) === 96) qlen++;
+      if (qlen === len && len === 1 && q >= le) {
+        // The first matching run may open a single-backtick code span
+        // (`deno`); marked's emStrong span does not close there when a
+        // later double-backtick span holds an inner single backtick
+        // (`` a ` b ``) -- the span runs to that inner tick instead,
+        // swallowing the emphasis between the link and that span.
+        // Find the close of the code span q opens, then look for such
+        // a double-backtick span after it.
+        let closeQ = q + 1;
+        while (closeQ < n && text.charCodeAt(closeQ) !== 96) closeQ++;
+        if (closeQ < n) {
+          let closeQLen = 0;
+          while (text.charCodeAt(closeQ + closeQLen) === 96) closeQLen++;
+          if (closeQLen === 1) {
+            let scan = closeQ + 1;
+            while (scan < n) {
+              while (scan < n && text.charCodeAt(scan) !== 96) scan++;
+              if (scan >= n) break;
+              let rl = 0;
+              while (text.charCodeAt(scan + rl) === 96) rl++;
+              if (rl === 2) {
+                let r = scan + 2;
+                while (r < n && text.charCodeAt(r) !== 96) r++;
+                if (r < n) {
+                  let rlen = 0;
+                  while (text.charCodeAt(r + rlen) === 96) rlen++;
+                  if (rlen === 1) {
+                    let s2 = r + 1;
+                    while (s2 < n && text.charCodeAt(s2) !== 96) s2++;
+                    if (s2 < n) {
+                      let s2len = 0;
+                      while (text.charCodeAt(s2 + s2len) === 96) s2len++;
+                      if (s2len === 2) {
+                        for (const d of delims) {
+                          if (d.pos >= p && d.pos < r + 1 && d.link === 0) { d.canOpen = false; d.canClose = false; }
+                        }
+                        q = -1; // span handled; do not also close at q
+                      }
+                    }
+                  }
+                }
+                break;
+              } else if (rl === 1) {
+                // another single-backtick code span: skip over it
+                let r = scan + 1;
+                while (r < n && text.charCodeAt(r) !== 96) r++;
+                if (r < n) {
+                  let rlen = 0;
+                  while (text.charCodeAt(r + rlen) === 96) rlen++;
+                  if (rlen === 1) { scan = r + 1; continue; }
+                }
+                break;
+              } else break;
+            }
+          }
+        }
+        if (q === -1) continue;
+      }
       if (qlen !== len) {
         // A stray backtick followed by a double-backtick code span that
         // holds an inner single backtick (`` d ` e ``) also masks the
