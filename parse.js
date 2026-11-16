@@ -5,6 +5,11 @@
 
 // ---------------------------------------------------------------- utilities
 
+// Next inline-special char: backslash, backtick, * _ ~ [ ] ! < & or newline.
+// Used to jump over long plain-text runs in parseInline (lastIndex is set
+// before every exec, so re-entrant parseInline calls are safe).
+const INLINE_SPECIAL_RE = /[\\`*_~\[\]!<&\n]/g;
+
 const CC = {
   SPACE: 32, TAB: 9, LF: 10, CR: 13, BANG: 33, QUOTE: 34, HASH: 35, DOLLAR: 36,
   PERCENT: 37, AMP: 38, SQUOTE: 39, LPAREN: 40, RPAREN: 41, STAR: 42, PLUS: 43,
@@ -1331,7 +1336,10 @@ function startsInterrupt(cur, inPara, paraInItem) {
 
 // Render text with numeric character references decoded and the no-encode
 // escape rule applied (see the escape section above).
+const RENDER_TEXT_SPECIAL_RE = /[&"'<>]/;
 function renderText(s) {
+  // Fast path: nothing escapable, return the string as-is (no scan).
+  if (!RENDER_TEXT_SPECIAL_RE.test(s)) return s;
   let out = '';
   let start = 0;
   let i = 0;
@@ -2083,6 +2091,22 @@ function parseInline(text, refs, ctx) {
           i = ea.next; textStart = i;
           continue;
         }
+      }
+    }
+    // Plain-text fast path: jump to the next inline-special char when
+    // the span in between holds no autolink marker (':', '@', 'www.').
+    // A span with a marker falls through to char-by-char (i++ below),
+    // so no autolink is ever skipped.
+    {
+      INLINE_SPECIAL_RE.lastIndex = i + 1;
+      const mm = INLINE_SPECIAL_RE.exec(text);
+      const ns = mm ? mm.index : n;
+      if (ns > i + 1) {
+        const colon = text.indexOf(':', i + 1);
+        const at = text.indexOf('@', i + 1);
+        const www = text.indexOf('www.', i + 1);
+        const hasMarker = (colon !== -1 && colon < ns) || (at !== -1 && at < ns) || (www !== -1 && www < ns);
+        if (!hasMarker) { i = ns; continue; }
       }
     }
     i++;
