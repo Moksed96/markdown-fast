@@ -874,7 +874,9 @@ function parseBlocks(src) {
         // line that lacks the item's content indent ONLY once it already
         // has content: an empty fence closes instead (the under-indented
         // line is not part of the item, so the fence never started).
-        if (tip.lines.length > 0) lazyLine = true;
+        // A list item marker never lazily continues the fence either: it
+        // starts a new item, closing this one (and the fence with it).
+        if (tip.lines.length > 0 && listItemStart(cur) === null) lazyLine = true;
         else closeAbove(idx);
       } else {
         closeAbove(idx);
