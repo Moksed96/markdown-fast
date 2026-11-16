@@ -2132,7 +2132,9 @@ function maskLabelCodeSpans(text, labelRanges, delims) {
       if (q < le) continue; // closing run must be at/after the label end
       const s = p, e = q + qlen;
       for (const d of delims) {
-        if (d.pos >= s && d.pos < e) { d.canOpen = false; d.canClose = false; }
+        // only top-level delimiters: emphasis inside a link/image label
+        // is tokenized with that label, not masked by the outer text
+        if (d.pos >= s && d.pos < e && d.link === 0) { d.canOpen = false; d.canClose = false; }
       }
     }
   }
