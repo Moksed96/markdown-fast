@@ -984,6 +984,14 @@ function parseBlocks(src) {
           closeAbove(open.length - 1);
         } else {
           let lineText = cur.rest();
+          // Inside a container (blockquote / list item) a leading tab
+          // in a paragraph line expands to spaces at the content-start
+          // column; at the top level a leading tab stays literal.
+          if (leaf.parent !== doc && lineText.charCodeAt(0) !== -1) {
+            let k = 0;
+            while (k < lineText.length && (lineText.charCodeAt(k) === 32 || lineText.charCodeAt(k) === 9)) k++;
+            if (k > 0 && lineText.slice(0, k).indexOf('\t') !== -1) lineText = expandLeadingTabs(lineText, cur.col);
+          }
           // a lazy continuation line drops 4 columns of indent when it has
           // 4 or more, and never starts a setext heading or a table
           if (lazyLine) {
@@ -1183,7 +1191,16 @@ function parseBlocks(src) {
       }
       // paragraph (keeps its leading spaces, up to 3)
       cur.restore(paraSave);
-      const p = addChild(cont, { t: 'para', lines: [cur.rest()], lastLazy: false, children: [] }, li);
+      let firstLine = cur.rest();
+      // Inside a container a leading tab in the first paragraph line
+      // expands to spaces at the content-start column (as in the
+      // continuation handler below); at the top level it stays literal.
+      if (cont !== doc) {
+        let k = 0;
+        while (k < firstLine.length && (firstLine.charCodeAt(k) === 32 || firstLine.charCodeAt(k) === 9)) k++;
+        if (k > 0 && firstLine.slice(0, k).indexOf('\t') !== -1) firstLine = expandLeadingTabs(firstLine, cur.col);
+      }
+      const p = addChild(cont, { t: 'para', lines: [firstLine], lastLazy: false, children: [] }, li);
       open.push(p);
       break;
     }
