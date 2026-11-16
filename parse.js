@@ -2128,7 +2128,37 @@ function maskLabelCodeSpans(text, labelRanges, delims) {
       if (q >= n) continue;
       let qlen = 0;
       while (text.charCodeAt(q + qlen) === 96) qlen++;
-      if (qlen !== len) continue;
+      if (qlen !== len) {
+        // A stray backtick followed by a double-backtick code span that
+        // holds an inner single backtick (`` d ` e ``) also masks the
+        // emphasis between the link and that span: marked's emStrong
+        // treats the inner single backtick as the close of the span the
+        // stray backtick opened. Mask up to just after that inner tick.
+        if (len === 1 && qlen === 2) {
+          let r = q + 2;
+          while (r < n && text.charCodeAt(r) !== 96) r++;
+          if (r < n) {
+            let rlen = 0;
+            while (text.charCodeAt(r + rlen) === 96) rlen++;
+            if (rlen === 1) {
+              // inner single backtick: is there a closing double run
+              // after it (so this really is a ``...`...`` code span)?
+              let s2 = r + 1;
+              while (s2 < n && text.charCodeAt(s2) !== 96) s2++;
+              if (s2 < n) {
+                let s2len = 0;
+                while (text.charCodeAt(s2 + s2len) === 96) s2len++;
+                if (s2len === 2) {
+                  for (const d of delims) {
+                    if (d.pos >= p && d.pos < r + 1 && d.link === 0) { d.canOpen = false; d.canClose = false; }
+                  }
+                }
+              }
+            }
+          }
+        }
+        continue;
+      }
       if (q < le) continue; // closing run must be at/after the label end
       const s = p, e = q + qlen;
       for (const d of delims) {
