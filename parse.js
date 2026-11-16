@@ -728,7 +728,8 @@ function stripLinkDefs(text, refs) {
 // ---------------------------------------------------------------- block parsing
 
 function parseBlocks(src) {
-  const normalized = src.replace(/\r\n?/g, '\n');
+  // Fast path: most inputs have no carriage returns, so skip the regex.
+  const normalized = src.indexOf('\r') === -1 ? src : src.replace(/\r\n?/g, '\n');
   const endsNL = normalized.length > 0 && normalized.charCodeAt(normalized.length - 1) === 10;
   let lines = normalized === '' ? [] : normalized.split('\n');
   if (endsNL) lines.pop();
@@ -1376,6 +1377,8 @@ function isUnicodeWhitespace(c) {
 }
 
 // Flanking info for a delimiter run at s[i..i+len).
+// Bitmask: 1 leftFlanking, 2 rightFlanking, 4 beforePunct, 8 afterPunct.
+// Returns an int instead of an object (hot path: every delimiter run).
 function flanking(s, i, len) {
   const before = i > 0 ? s.charCodeAt(i - 1) : -1;
   const after = i + len < s.length ? s.charCodeAt(i + len) : -1;
@@ -1383,9 +1386,12 @@ function flanking(s, i, len) {
   const afterWS = after === -1 || isUnicodeWhitespace(after);
   const beforePunct = before !== -1 && isPunct(before);
   const afterPunct = after !== -1 && isPunct(after);
-  const leftFlanking = !afterWS && (!afterPunct || beforeWS || beforePunct);
-  const rightFlanking = !beforeWS && (!beforePunct || afterWS || afterPunct);
-  return { leftFlanking, rightFlanking, beforePunct, afterPunct };
+  let f = 0;
+  if (!afterWS && (!afterPunct || beforeWS || beforePunct)) f |= 1;
+  if (!beforeWS && (!beforePunct || afterWS || afterPunct)) f |= 2;
+  if (beforePunct) f |= 4;
+  if (afterPunct) f |= 8;
+  return f;
 }
 
 // Match an email address starting at s[i]. Returns the index just past it, or 0.
@@ -1472,7 +1478,7 @@ function matchBareEmail(s, i, delims) {
       let j2 = end;
       while (s.charCodeAt(j2) === 95) j2++;
       const fl = flanking(s, end, j2 - end);
-      const canClose = fl.rightFlanking && (!fl.leftFlanking || fl.afterPunct);
+      const canClose = (fl & 2) && (!(fl & 1) || (fl & 8));
       if (canClose) {
         for (const d of delims) if (d.ch === '_' && d.canOpen) return end;
       }
@@ -1715,6 +1721,16 @@ function matchExtended(s, i, prev, delims, inBracket) {
     const text = s.slice(i, end);
     return { dest: 'http://' + text, text, next: end };
   }
+  // Fast gate: a scheme needs ':' and an email needs '@' before the
+  // word ends. One scan for either; bail out if neither is present
+  // (this skips the domain/email scans for ordinary words).
+  let hasMark = false;
+  for (let p = i; p < s.length; p++) {
+    const ch = s.charCodeAt(p);
+    if (ch === 58 || ch === 64) { hasMark = true; break; }
+    if (ch === 32 || ch === 9 || ch === 10 || ch === 60 || ch < 32) break;
+  }
+  if (!hasMark) return null;
   // scheme:// or scheme:email
   if (isAlpha(s.charCodeAt(i))) {
     let k = i + 1;
@@ -1876,10 +1892,10 @@ function parseInline(text, refs, ctx) {
       const len = j - i;
       const fl = flanking(text, i, len);
       let canOpen, canClose;
-      if (c === 42) { canOpen = fl.leftFlanking; canClose = fl.rightFlanking; }
+      if (c === 42) { canOpen = (fl & 1) !== 0; canClose = (fl & 2) !== 0; }
       else {
-        canOpen = fl.leftFlanking && (!fl.rightFlanking || fl.beforePunct);
-        canClose = fl.rightFlanking && (!fl.leftFlanking || fl.afterPunct);
+        canOpen = (fl & 1) !== 0 && ((fl & 2) === 0 || (fl & 4) !== 0);
+        canClose = (fl & 2) !== 0 && ((fl & 1) === 0 || (fl & 8) !== 0);
       }
       flushText(i);
       const tok = { k: 'delim', ch: String.fromCharCode(c), n: len, origN: len, openUses: [], closeUses: [], canOpen, canClose, pos: i, link: 0 };
@@ -1895,7 +1911,7 @@ function parseInline(text, refs, ctx) {
       if (len === 1 || len === 2) {
         const fl = flanking(text, i, len);
         flushText(i);
-        const tok = { k: 'delim', ch: '~', n: len, origN: len, openUses: [], closeUses: [], canOpen: fl.leftFlanking, canClose: fl.rightFlanking, pos: i, link: 0 };
+        const tok = { k: 'delim', ch: '~', n: len, origN: len, openUses: [], closeUses: [], canOpen: (fl & 1) !== 0, canClose: (fl & 2) !== 0, pos: i, link: 0 };
         items.push(tok);
         delims.push(tok);
         i = j; textStart = i;
@@ -2048,10 +2064,12 @@ function parseInline(text, refs, ctx) {
       continue;
     }
     // extended autolink (GFM): only when not inside a word, and not
-    // inside an unclosed <a> tag (marked suppresses them there)
-    if ((i === 0 || (!isAlnum(text.charCodeAt(i - 1)) && text.charCodeAt(i - 1) !== 95 && text.charCodeAt(i - 1) !== 47)) && !(ctx && ctx.inA)) {
-      if (c === 119 || isAlpha(c) || isDigit(c)) {
-        const prev = i === 0 ? -1 : text.charCodeAt(i - 1);
+    // inside an unclosed <a> tag (marked suppresses them there).
+    // (prev char and word-char tests inlined: this runs per plain char.)
+    if (!(ctx && ctx.inA)) {
+      const prev = i === 0 ? -1 : text.charCodeAt(i - 1);
+      const prevWord = prev !== -1 && ((prev >= 48 && prev <= 57) || (prev >= 65 && prev <= 90) || (prev >= 97 && prev <= 122) || prev === 95 || prev === 47);
+      if (!prevWord && (c === 119 || (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122))) {
         let inBracket = false;
         for (let k = brackets.length - 1; k >= 0; k--) if (brackets[k].active && brackets[k].live) { inBracket = true; break; }
         const ea = matchExtended(text, i, prev, delims, inBracket);
