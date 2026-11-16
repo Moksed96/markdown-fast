@@ -897,9 +897,13 @@ function parseBlocks(src) {
             }
           } else {
             // Backtick fences: content lines lose up to the opening
-            // fence's indent.
+            // fence's indent. At the top level, a tab that straddles
+            // the strip boundary is removed entirely (no partial tab
+            // survives); inside a container the partial tab is kept
+            // as spaces.
             const ci = cur.indent();
             if (ci > 0) cur.adv(Math.min(ci, leaf.fenceIndent || 0));
+            if (cur.pt > 0 && leaf.parent === doc) cur.pt = 0;
             line = cur.rest();
             // inside a container, leading tabs in fence content expand to
             // spaces (at top level they are kept as tabs); the tab column
