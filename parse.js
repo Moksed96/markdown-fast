@@ -2317,6 +2317,41 @@ function processEmphasis(delims, text) {
       break;
     }
   }
+  // When a len-2 closer is split 1+1 between an outer strong opener
+  // and an inner em opener, and an inner strong span already sits
+  // between the em opener and the closer, marked pairs the outer
+  // strong with the closer (use 2) and leaves the em opener literal
+  // (**removes *input **parse**parse* release**: the outer ** claims
+  // the final **). Re-pair that specific shape here.
+  for (const d of delims) {
+    if (d.closeUses.length !== 2) continue;
+    const [u1, u2] = d.closeUses;
+    if (u1.use !== 1 || u2.use !== 1) continue;
+    const oA = u1.partner, oB = u2.partner;
+    if (oA.ch !== d.ch || oB.ch !== d.ch) continue;
+    const oStrong = oA.origN >= 2 ? oA : (oB.origN >= 2 ? oB : null);
+    const oEm = oA.origN === 1 ? oA : (oB.origN === 1 ? oB : null);
+    if (!oStrong || !oEm || oStrong === oEm) continue;
+    if (oStrong.pos >= oEm.pos) continue; // strong must be the outer one
+    let hasInner = false;
+    for (const sp of spans) {
+      if (sp.start > oEm.pos && sp.end < d.pos) { hasInner = true; break; }
+    }
+    if (!hasInner) continue;
+    // unpair the em opener from this closer
+    oEm.openUses = oEm.openUses.filter(u => u.partner !== d);
+    d.closeUses = d.closeUses.filter(u => u.partner !== oEm);
+    oEm.n += 1;
+    d.n += 1;
+    for (let s = spans.length - 1; s >= 0; s--) {
+      if (spans[s].start === oEm.pos && spans[s].end === d.pos) spans.splice(s, 1);
+    }
+    // upgrade the strong opener's use from 1 to 2
+    for (const u of oStrong.openUses) if (u.partner === d) u.use = 2;
+    for (const u of d.closeUses) if (u.partner === oStrong) u.use = 2;
+    oStrong.n -= 1;
+    d.n -= 1;
+  }
   // A strong closer run with a leftover delimiter (e.g. the third * of
   // ***) renders the leftover INSIDE the strong when an inner emphasis
   // closes just before it with no space between that close and the
