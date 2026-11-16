@@ -2384,14 +2384,22 @@ function renderBlock(blk, refs, ctx) {
       let text = blk.lines.join('\n');
       // a trailing newline is kept when either its last line is the
       // document's last line and the input ends with a newline, or it
-      // ended at its end marker and the next line is not blank
+      // ended at its end marker and the next line is not blank.
+      // The EOF newline is only kept at the top level: inside a list
+      // item (or quote) the container's close follows immediately, so
+      // a tight <li> holding an HTML block gets no trailing newline.
       {
-        const lastLineAtEOF = blk.endLine === ctx.totalLines - 1 && ctx.endsNL;
+        const lastLineAtEOF = blk.parent.t === 'doc' && blk.endLine === ctx.totalLines - 1 && ctx.endsNL;
         const nextLine = blk.endLine + 1;
         // the next line counts as "more" when it is non-empty: a line of
         // only spaces/tabs still keeps the trailing newline (marked
         // treats it as a line, not as the absence of one)
-        const nextNotBlank = nextLine < ctx.totalLines && ctx.lines[nextLine].length > 0;
+        // A following line that is only container markers (a bare '>'
+        // with spaces/tabs) has no content, so it does not count as
+        // "more" after the end marker; a whitespace-only line with no
+        // marker still does (it is a line of content, per doc-19/24).
+        const nextRaw = nextLine < ctx.totalLines ? ctx.lines[nextLine] : '';
+        const nextNotBlank = nextRaw.length > 0 && !(nextRaw.indexOf('>') !== -1 && nextRaw.replace(/[> \t]/g, '') === '');
         const endedWithMore = blk.endedAtMarker && nextNotBlank;
         if (lastLineAtEOF) text += '\n';
         else if (endedWithMore) text += '\n';
