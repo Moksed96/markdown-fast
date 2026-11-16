@@ -2083,7 +2083,7 @@ function parseInline(text, refs, ctx) {
   // backtick run after it has the same length and starts at/after the
   // label end, disable the delimiters inside that span.
   maskLabelCodeSpans(text, labelRanges, delims);
-  processEmphasis(delims);
+  processEmphasis(delims, text);
   return renderItems(items);
 }
 
@@ -2213,7 +2213,7 @@ function mCanPair(delims, oi, ci, spans) {
 }
 
 // Emphasis processing: match closers (from the end) with openers.
-function processEmphasis(delims) {
+function processEmphasis(delims, text) {
   // Closers are processed in document order (first to last); for each
   // closer, the nearest preceding opener of the same character is used.
   // A closer cannot pair with an opener across a link/image boundary
@@ -2259,6 +2259,27 @@ function processEmphasis(delims) {
       break;
     }
   }
+  // A strong closer run with a leftover delimiter (e.g. the third * of
+  // ***) renders the leftover INSIDE the strong when an inner emphasis
+  // closes just before it with no space between that close and the
+  // strong closer (**a*b*c*** -> <strong>a<em>b</em>c*</strong>), and
+  // OUTSIDE it otherwise (**a *b* c*** -> <strong>...</strong>*).
+  // The leftover is rendered before the close tag in the first case.
+  if (text) {
+    for (const d of delims) {
+      if (d.n <= 0 || !d.closeUses.length) continue;
+      let strongOpener = null;
+      for (const u of d.closeUses) if (u.use === 2) { strongOpener = u.partner; break; }
+      if (!strongOpener) continue;
+      let innerEnd = -1;
+      for (const sp of spans) {
+        if (sp.end > strongOpener.pos && sp.end < d.pos && sp.end > innerEnd) innerEnd = sp.end;
+      }
+      if (innerEnd < 0) continue;
+      const seg = text.slice(innerEnd, d.pos);
+      if (!/[ \t\n]/.test(seg)) d.leftoverInside = true;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- rendering
@@ -2285,8 +2306,9 @@ function renderItems(items) {
       out += '>';
     } else if (it.k === 'delim') {
       const tag = it.ch === '~' ? 'del' : null;
+      if (it.leftoverInside && it.n > 0) out += it.ch.repeat(it.n);
       for (const u of it.closeUses) out += tag ? '</del>' : (u.use === 2 ? '</strong>' : '</em>');
-      if (it.n > 0) out += it.ch.repeat(it.n);
+      if (!it.leftoverInside && it.n > 0) out += it.ch.repeat(it.n);
       for (let k = it.openUses.length - 1; k >= 0; k--) {
         const u = it.openUses[k];
         out += tag ? '<del>' : (u.use === 2 ? '<strong>' : '<em>');
