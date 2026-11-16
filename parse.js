@@ -809,9 +809,13 @@ function parseBlocks(src) {
     }
   }
 
+  // One cursor reused for every line (reset per line): avoids an
+  // allocation per line (~800/doc). Helpers take it as a parameter and
+  // save/restore it, so no state leaks across lines.
+  const cur = new Cur('');
   for (let li = 0; li < totalLines; li++) {
     const rawLine = lines[li];
-    const cur = new Cur(rawLine);
+    cur.s = rawLine; cur.i = 0; cur.col = 0; cur.pt = 0;
     // indent (spaces before '>') of the innermost quote matched on this
     // line, and the total columns consumed by quote prefixes / the width
     // of the innermost quote's prefix (for tilde fence tabs: each outer
