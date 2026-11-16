@@ -825,7 +825,7 @@ function parseBlocks(src) {
         if (cur.ch() === 62) { // >
           lastQuoteInd = ind;
           cur.adv(1);
-          if (cur.ch() === 32 || cur.ch() === 9) cur.adv(1);
+          if (cur.ch() === 32) cur.adv(1);
           lastQuoteWidth = cur.col - w0;
           quoteWidthTotal += lastQuoteWidth;
           touchEnd(blk, li); // a > line belongs to the quote (and its ancestors)
