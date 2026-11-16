@@ -608,6 +608,29 @@ const LABEL_VALID_RE = new RegExp(
 );
 function labelTextValid(s) { return LABEL_VALID_RE.test(s); }
 
+// Code-span ranges [start, end) inside a link label, pairing backtick
+// runs greedily the way marked's label regex does (an opening run pairs
+// with the next run; the content between them has no backticks). Used to
+// tell whether a backtick is claimed by a code span in the label.
+function labelCodeSpans(s) {
+  const spans = [];
+  let i = 0;
+  while (i < s.length) {
+    if (s.charCodeAt(i) !== 96) { i++; continue; }
+    let j = i;
+    while (j < s.length && s.charCodeAt(j) === 96) j++;
+    // find the next backtick run
+    let k = j;
+    while (k < s.length && s.charCodeAt(k) !== 96) k++;
+    if (k >= s.length) break; // lone run: no code span
+    let m = k;
+    while (m < s.length && s.charCodeAt(m) === 96) m++;
+    spans.push([i, m]);
+    i = m;
+  }
+  return spans;
+}
+
 function skipWSNL(s, i) {
   while (i < s.length) {
     const c = s.charCodeAt(i);
@@ -1777,7 +1800,30 @@ function parseInline(text, refs, ctx) {
       const len = j - i;
       let k = j, found = -1;
       while (k < n) {
-        if (text.charCodeAt(k) === 96) {
+        const ch = text.charCodeAt(k);
+        if (ch === 93) { // ]
+          // A code span may not extend past the ']' closing a bracket
+          // when the bracket's label is valid and this opening backtick
+          // is claimed by a code span inside that label (the link then
+          // forms and the span stays inside it). A lone backtick in the
+          // label, or an invalid label, lets the span cross the ']'.
+          let stop = false;
+          for (let b = brackets.length - 1; b >= 0; b--) {
+            if (!brackets[b].active) continue;
+            const lab = text.slice(brackets[b].pos + 1, k);
+            if (lab.indexOf('`') !== -1 && labelTextValid(lab)) {
+              const off = i - (brackets[b].pos + 1);
+              const spans = labelCodeSpans(lab);
+              for (const sp of spans) {
+                if (off >= sp[0] && off < sp[1]) { stop = true; break; }
+              }
+            }
+            break; // only the innermost open bracket matters
+          }
+          if (stop) break;
+          k++; continue;
+        }
+        if (ch === 96) {
           let m = k;
           while (text.charCodeAt(m) === 96) m++;
           if (m - k === len) { found = k; break; }
