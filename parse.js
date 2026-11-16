@@ -1008,12 +1008,28 @@ function parseBlocks(src) {
         } else {
           let lineText = cur.rest();
           // Inside a container (blockquote / list item) a leading tab
-          // in a paragraph line expands to spaces at the content-start
-          // column; at the top level a leading tab stays literal.
+          // in a paragraph line expands to spaces. The column is the
+          // cursor column, except inside a list item it resets to the
+          // enclosing items' content indent (a blockquote prefix inside
+          // a list item does not add to it); at the top level a leading
+          // tab stays literal.
           if (leaf.parent !== doc && lineText.charCodeAt(0) !== -1) {
             let k = 0;
             while (k < lineText.length && (lineText.charCodeAt(k) === 32 || lineText.charCodeAt(k) === 9)) k++;
-            if (k > 0 && lineText.slice(0, k).indexOf('\t') !== -1) lineText = expandLeadingTabs(lineText, cur.col);
+            if (k > 0 && lineText.slice(0, k).indexOf('\t') !== -1) {
+              let col = cur.col;
+              // Inside a blockquote the tab column is relative to the
+              // list items enclosing that quote (their indents were
+              // stripped before the quote was seen); without a quote
+              // the cursor column already is the content column.
+              let seenQ = false, outCols = 0;
+              for (let b = leaf.parent; b && b.t !== 'doc'; b = b.parent) {
+                if (b.t === 'quote') seenQ = true;
+                else if (b.t === 'item' && seenQ) outCols += b.contentIndent;
+              }
+              if (seenQ) col -= outCols;
+              lineText = expandLeadingTabs(lineText, col);
+            }
           }
           // a lazy continuation line drops 4 columns of indent when it has
           // 4 or more, and never starts a setext heading or a table
@@ -1216,12 +1232,23 @@ function parseBlocks(src) {
       cur.restore(paraSave);
       let firstLine = cur.rest();
       // Inside a container a leading tab in the first paragraph line
-      // expands to spaces at the content-start column (as in the
-      // continuation handler below); at the top level it stays literal.
+      // expands to spaces (as in the continuation handler below); the
+      // column resets to the enclosing items' content indent inside a
+      // list item, else it is the cursor column; at the top level the
+      // tab stays literal.
       if (cont !== doc) {
         let k = 0;
         while (k < firstLine.length && (firstLine.charCodeAt(k) === 32 || firstLine.charCodeAt(k) === 9)) k++;
-        if (k > 0 && firstLine.slice(0, k).indexOf('\t') !== -1) firstLine = expandLeadingTabs(firstLine, cur.col);
+        if (k > 0 && firstLine.slice(0, k).indexOf('\t') !== -1) {
+          let col = cur.col;
+          let seenQ2 = false, outCols2 = 0;
+          for (let b = cont; b && b.t !== 'doc'; b = b.parent) {
+            if (b.t === 'quote') seenQ2 = true;
+            else if (b.t === 'item' && seenQ2) outCols2 += b.contentIndent;
+          }
+          if (seenQ2) col -= outCols2;
+          firstLine = expandLeadingTabs(firstLine, col);
+        }
       }
       const p = addChild(cont, { t: 'para', lines: [firstLine], lastLazy: false, children: [] }, li);
       open.push(p);
